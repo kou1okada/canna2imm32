@@ -1,0 +1,73 @@
+16 Sep 2000 esecanna_1.0.1 released.
+
+	* CREDITS を追加した。
+
+09 Sep 2000 esecanna_1.0.0 released.
+
+	* オフィシャルリリース
+	* misc.c: BIGENDIAN なマシンで IPアドレスが正しく表示されないバグを
+	  修正。
+	  野口＠九大 さんにパッチを頂きました。
+	  Thanx! > 野口＠九大さん。
+	* esecannarc: 細かい修正。
+
+14 Aug 2000 esecanna_0.99.3 released.
+
+	* cannasocket.c: select() に渡す maxfd が最大値ではない可能性がある
+	  バグを修正。
+
+05 Jul 2000 esecanna_0.99.2 released.
+
+	* バイトオーダーの違いを吸収する修正。
+	  cannawc2euc(), euc2cannawc(), LSBMSB16/32 に手を入れた。
+	* vasprintf() がない場合の ad-hoc な修正。
+	* m_daemonize() を修正。
+	* 瀬戸＠アルファシステムズ さんにパッチをいただきました。
+	  Thanx! > 瀬戸＠アルファシステムズ さん。
+
+04 Apr 2000 esecanna_0.99.1 released.
+
+	* misc.c: romatbl, glyph を static にし、vje30.so, vje25.so がロード
+	  できないバグを修正。
+
+28 Mar 2000 esecanna_0.99.0 released.
+
+	* プレオフィシャルリリース
+	* atok.so を dlopen できるように修正。
+	* モジュールがロードされたとき、Debug mode かどうかを渡すようにした。
+
+09 Mar 2000 esecanna_0.14.2 released.
+
+	* cannasocket.c: gethostbyname() で NULL が返る場合、SEG Fault を起こ
+	  すバグを修正。
+	  Thanx! > 三平さん。
+
+08 Mar 2000 esecanna_0.14.1 released.
+
+	* Makefile.am に AUTOMAKE_OPTIONS を追加し、automake を実行したときに
+	  エラーが出るのを修正した。
+	* mkinstalldirs と missing を追加した。
+
+06 Mar 2000 esecanna_0.14.0 released.
+
+	* autoconf 化。
+	* libesecanna.so をなくした。
+
+25 Feb 2000 esecanna_0.13.0 released.
+
+	* wnn6.so と同期。
+	* esecannarc に WNN6 の設定を追加。
+	* Plugins: を表示するときにバグがあったのを直した。
+	  Thanx! > 森田さん、みなみえさん、knu さん。
+	* rcVer をなくした。
+
+22 Feb 2000 esecanna_0.12.0 released.
+
+	* vje30.so と同期。
+	* esecannarc に VJE30 の設定を追加。
+
+21 Feb 2000 esecanna_0.11.0 released.
+
+	* ダイナミックモジュールに移行した。
+	* 再起動機能を一時 disable した。
+
