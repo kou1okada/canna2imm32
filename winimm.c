@@ -34,6 +34,7 @@
 #include <errno.h>
 extern int errno;
 extern void sig_terminate();
+extern char convmode;		/* 2004.12.06 Y.A. */
 
 typedef struct _winimm_t
 {
@@ -52,6 +53,8 @@ typedef struct _context_t
 	BOOL fOpen;						/* オープン中か否か */
 	DWORD fdwConversion;			/* かな漢の入力モード */
 	DWORD fdwSentence;				/* かな漢の変換モード */
+
+	int cur_bun_no;					/* 現在候補をオープンしている文節番号	04.10.04 Y.A. */
 
 	/* >> 変換中の状態保持用	*/
 	ushort*	szYomiStr;				/* 外から指定された読み（これはCannaのワイド文字列） */
@@ -114,23 +117,23 @@ struct {
 } hira_table[] =
 {
 /*	han_start, han_end, modifiers, offset, zenkaku2_start	*/
-	{0xa600,	0xa600,       0,	0,		0xf2},	/* ｦ */
-	{0xa700,	0xab00,       0,	2,		0xa1},	/* ｧ-ｫ */
-	{0xac00,	0xae00,       0,	2,		0xe3},	/* ｬ-ｮ */
-	{0xaf00,	0xaf00,       0,	0,		0xc3},	/* ｯ */
-	{0xb100,	0xb500,       0,	2,		0xa2},	/* ｱ-ｵ */
-	{0xb600,	0xba00,	MOD_TEN,	2,		0xab},	/* ｶ-ｺ */
-	{0xbb00,	0xbf00,	MOD_TEN,	2,		0xb5},	/* ｻ-ｿ */
-	{0xc000,	0xc100,	MOD_TEN,	2,		0xbf},	/* ﾀ-ﾁ */
-	{0xc200,	0xc200,	MOD_TEN,	0,		0xc4},	/* ﾂ */
-	{0xc300,	0xc400,	MOD_TEN,	2,		0xc6},	/* ﾃ-ﾄ */
-	{0xc500,	0xc900,       0,	1,		0xca},	/* ﾅ-ﾉ */
-	{0xca00,	0xce00,	 MOD_TM,	3,		0xcf},	/* ﾊ-ﾎ */
-	{0xcf00,	0xd300,       0,	1,		0xde},	/* ﾏ-ﾓ */
-	{0xd400,	0xd600,       0,	2,		0xe4},	/* ﾔ-ﾖ */
-	{0xd700,	0xdb00,       0,	1,		0xe9},	/* ﾗ-ﾛ */
-	{0xdc00,	0xdc00,       0,	0,		0xef},	/* ﾜ */
-	{0xdd00,	0xdd00,       0,	0,		0xf3},	/* ﾝ */
+	{0xA600,	0xA600,       0,	0,		0xF2},	/* ｦ */
+	{0xA700,	0xAB00,       0,	2,		0xA1},	/* ｧ-ｫ */
+	{0xAC00,	0xAE00,       0,	2,		0xE3},	/* ｬ-ｮ */
+	{0xAF00,	0xAF00,       0,	0,		0xC3},	/* ｯ */
+	{0xB100,	0xB500,       0,	2,		0xA2},	/* ｱ-ｵ */
+	{0xB600,	0xBA00,	MOD_TEN,	2,		0xAB},	/* ｶ-ｺ */
+	{0xBB00,	0xBF00,	MOD_TEN,	2,		0xB5},	/* ｻ-ｿ */
+	{0xC000,	0xC100,	MOD_TEN,	2,		0xBF},	/* ﾀ-ﾁ */
+	{0xC200,	0xC200,	MOD_TEN,	0,		0xC4},	/* ﾂ */
+	{0xC300,	0xC400,	MOD_TEN,	2,		0xC6},	/* ﾃ-ﾄ */
+	{0xC500,	0xC900,       0,	1,		0xCA},	/* ﾅ-ﾉ */
+	{0xCA00,	0xCE00,	 MOD_TM,	3,		0xCF},	/* ﾊ-ﾎ */
+	{0xCF00,	0xD300,       0,	1,		0xDE},	/* ﾏ-ﾓ */
+	{0xD400,	0xD600,       0,	2,		0xE4},	/* ﾔ-ﾖ */
+	{0xD700,	0xDB00,       0,	1,		0xE9},	/* ﾗ-ﾛ */
+	{0xDC00,	0xDC00,       0,	0,		0xEF},	/* ﾜ */
+	{0xDD00,	0xDD00,       0,	0,		0xF3},	/* ﾝ */
 	{     0,	     0,       0,	0,		   0}
 };
 
@@ -143,6 +146,11 @@ ushort daku_table[] =
 	0xD1A4, 0xD4A4, 0xD7A4, 0xDAA4, 0xDDA4,			/* ぱぴぷぺぽ */
 	0
 };
+
+/* 最低限必要なプロトタイプ */
+static ushort *mw_after_conversion(context_t *cx, HIMC hIMC, int *nbun, int bun, int *len_r);
+static int mw_open_imm32(int id, context_t *cx, char *envname);
+static int mw_set_target_clause(context_t *cx, HIMC hIMC, int bun_no);
 
 
 /*
@@ -158,6 +166,9 @@ ushort daku_table[] =
 static short mw_switch_context(context_t *cx)
 {
 	HIMC hIMC = 0;
+	BOOL fRet;
+	int nbun, len;	/* 04.10.05 Y.A. */
+
 
 	if (hWnd_IMM == 0)
 		return 0;
@@ -165,24 +176,30 @@ static short mw_switch_context(context_t *cx)
 	if (hIMC == 0)
 		return 0;
 
-	/* 変換中の状態保持用変数を初期化 */
-	if (cx->szYomiStr != NULL)
-		MYFREE(cx->szYomiStr);
-	if (cx->dwYomiCls != NULL)
-		MYFREE(cx->szYomiStr);
-	if (cx->szCompStr != NULL)
-		MYFREE(cx->szCompStr);
 	if (cx->szCompReadStr != NULL)
-		MYFREE(cx->szCompReadStr);
-	if (cx->bCompAttr != NULL)
-		MYFREE(cx->bCompAttr);
-	if (cx->dwCompCls != NULL)
-		MYFREE(cx->dwCompCls);
-	if (cx->bCompReadAttr != NULL)
-		MYFREE(cx->bCompReadAttr);
-	if (cx->dwCompReadCls != NULL)
-		MYFREE(cx->dwCompReadCls);
-	cx->dwYomiClsLen = cx->dwCompClsLen = cx->dwCompAttrLen = cx->dwCompReadClsLen = cx->dwCompReadAttrLen = 0;
+	{
+		/* 現在変換中のものがあれば終わらせる */
+		mw_set_target_clause(cx, hIMC, cx->cur_bun_no);
+		ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);				/* 失敗しても無視 */
+
+		/* 読みの再設定 */
+		fRet = ImmSetCompositionStringW(hIMC, SCS_SETSTR, NULL, 0, cx->szCompReadStr, wcslen(cx->szCompReadStr) * 2);	/* 読み設定 */
+		if (fRet == FALSE)
+		{
+			m_msg_dbg("Error:ImmSetCompositionString(SCS_SETSTR) @ mw_switch_context\n");
+			ImmReleaseContext(hWnd_IMM, hIMC);
+			return 0;
+		}
+		fRet = ImmNotifyIME(hIMC, NI_COMPOSITIONSTR, CPS_CONVERT, 0);	/* 変換実行 */
+		if (fRet == FALSE)
+		{
+			m_msg_dbg("Error:ImmNotifyIME(NI_COMPOSITIONSTR) @ mw_switch_context\n");
+			ImmReleaseContext(hWnd_IMM, hIMC);
+			return 0;
+		}
+		/* 候補リストはクローズ */
+	}
+	cx->cur_bun_no = -1;	/* 04.10.04 Y.A. */
 
 	ImmReleaseContext(hWnd_IMM, hIMC);
 	return 1;
@@ -275,16 +292,12 @@ static context_t *mw_get_context(short cx_num)
 }
 
 /*
-  mw_clear_context
+  mw_sub_clear_context
   
   指定されたコンテキスト番号のコンテキスト情報の中身をクリアする
 */
-static int mw_clear_context(short cx_num)
+static int mw_sub_clear_context(context_t *cx)
 {
-	context_t *cx;
-
-	cx = mw_get_context(cx_num);
-
 	if (cx->szYomiStr != NULL)
 		MYFREE(cx->szYomiStr);
 	if (cx->dwYomiCls != NULL)
@@ -302,6 +315,23 @@ static int mw_clear_context(short cx_num)
 	if (cx->dwCompReadCls != NULL)
 		MYFREE(cx->dwCompReadCls);
 	cx->dwYomiClsLen = cx->dwCompClsLen = cx->dwCompAttrLen = cx->dwCompReadClsLen = cx->dwCompReadAttrLen = 0;
+	cx->cur_bun_no = -1;	/* 04.10.04 Y.A. */
+
+	return 0;
+}
+
+/*
+  mw_clear_context
+  
+  指定されたコンテキスト番号のコンテキスト情報の中身をクリアする
+*/
+static int mw_clear_context(short cx_num)
+{
+	context_t *cx;
+
+	cx = mw_get_context(cx_num);
+
+	mw_sub_clear_context(cx);
 
 	return 0;
 }
@@ -612,6 +642,144 @@ static ushort *mw_sjis2wcs(LPCSTR src, int srclen)
 }
 
 /*
+ * mw_after_selectcand() - 変換候補を選択後呼ぶ。指定文節の現在の候補を得る。
+ *
+ * 引数                  - bun		指定文節
+ * 戻り値                - len_r	文字数
+ *                         
+ */
+static ushort *mw_after_selectcand(context_t *cx, HIMC hIMC, int bun, int *len_r)
+{
+	BOOL nRet = TRUE;
+	long BufLen;
+	ushort *ret;
+/*	context_t cx; */
+
+	/* 前回までの後始末 */
+	mw_sub_clear_context(cx);
+
+	/*  文節位置の情報 */
+	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPCLAUSE, NULL, 0);
+	if ((BufLen == IMM_ERROR_NODATA) || (BufLen == IMM_ERROR_GENERAL) || (BufLen == 0))
+	{
+		nRet = FALSE;
+		goto end_exit;
+	} else
+	{
+		cx->dwCompCls = (LPDWORD)calloc(1, BufLen);
+		cx->dwCompClsLen = ImmGetCompositionStringW(hIMC, GCS_COMPCLAUSE, cx->dwCompCls, BufLen);
+	}
+
+	/* 変換後文字列取得 */
+	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPSTR, NULL, 0);	/* 変換後取得 */
+	if ((BufLen == IMM_ERROR_NODATA) || (BufLen == IMM_ERROR_GENERAL) || (BufLen == 0))
+	{
+		nRet = FALSE;
+		goto end_exit;
+	} else
+	{
+		cx->szCompStr = (LPWSTR)calloc(1, BufLen + 1);
+		ImmGetCompositionStringW(hIMC, GCS_COMPSTR, cx->szCompStr, BufLen + 1);
+	}
+
+	/* 読み文字列取得 */
+	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPREADSTR, NULL, 0);
+	if ((BufLen == IMM_ERROR_NODATA) || (BufLen == IMM_ERROR_GENERAL) || (BufLen == 0))
+	{
+		nRet = FALSE;
+		goto end_exit;
+	} else
+	{
+		cx->szCompReadStr = (LPWSTR)calloc(1, BufLen + 1);
+		ImmGetCompositionStringW(hIMC, GCS_COMPREADSTR, cx->szCompReadStr, BufLen + 1);
+	}
+
+	/* 文節属性の情報 */
+	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPATTR, NULL, 0);
+	if ((BufLen == IMM_ERROR_NODATA) || (BufLen == IMM_ERROR_GENERAL) || (BufLen == 0))
+	{
+		nRet = FALSE;
+		goto end_exit;
+	} else
+	{
+		cx->bCompAttr = (LPBYTE)calloc(1, BufLen);
+		cx->dwCompAttrLen = ImmGetCompositionStringW(hIMC,GCS_COMPATTR,cx->bCompAttr,BufLen);
+	}
+
+	/* 読み文節の情報 */
+	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPREADCLAUSE, NULL, 0);
+	if ((BufLen == IMM_ERROR_NODATA) || (BufLen == IMM_ERROR_GENERAL) || (BufLen == 0))
+	{
+		nRet = FALSE;
+		goto end_exit;
+	} else
+	{
+		cx->dwCompReadCls = (LPDWORD)calloc(1, BufLen);
+
+		cx->dwCompReadClsLen = ImmGetCompositionStringW(hIMC,GCS_COMPREADCLAUSE,cx->dwCompReadCls,BufLen);
+	}
+
+	/* 読み属性の情報 */
+	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPREADATTR, NULL, 0);
+	if ((BufLen == IMM_ERROR_NODATA) || (BufLen == IMM_ERROR_GENERAL) || (BufLen == 0))
+	{
+		nRet = FALSE;
+		goto end_exit;
+	} else
+	{
+		cx->bCompReadAttr = (LPBYTE)calloc(1, BufLen);
+		cx->dwCompReadAttrLen = ImmGetCompositionStringW(hIMC,GCS_COMPREADATTR,cx->bCompReadAttr,BufLen);
+	}
+
+end_exit:
+	if (nRet == FALSE)
+	{	/* 変換に失敗したようなので後始末 */
+		ret = NULL;
+		*len_r = 0;
+	} else
+	{	/* 成功したのでcannawcを作って終了 */
+		ushort *workp;
+		int worklen;
+		int i;
+		static buffer_t zbuf;
+
+		/* まず文字数を数える */
+		workp = mw_ucs2wcs(&(cx->szCompStr[cx->dwCompCls[bun]]), wcslen(&(cx->szCompStr[cx->dwCompCls[bun]])));
+		if (workp == NULL)
+		{
+			ret = NULL;
+			*len_r = 0;
+			goto end_exit_2;
+		}
+		worklen = cannawcstrlen(workp);
+
+		/* 必要となるバッファを確保 */
+		buffer_check(&zbuf, (worklen + 1) * 2);	/* 文字＋ターミネート */
+		ret = (ushort *)(zbuf.buf);
+		memset((LPVOID)ret, 0, (worklen + 1) * 2);
+
+		/* 文節ごとにsjis->cannawc変換する */
+		*len_r = 0;
+
+		workp = mw_ucs2wcs(&(cx->szCompStr[cx->dwCompCls[bun]]), cx->dwCompCls[bun+1] - cx->dwCompCls[bun]);
+		if (workp == NULL)
+		{
+			ret = NULL;
+			*len_r = 0;
+			goto end_exit_2;
+		}
+		worklen = cannawcstrlen(workp);
+		memcpy(ret, workp, worklen * 2);
+		*len_r = worklen;
+
+		/* 最後に戻り値を文字列の先頭にする */
+		ret = (ushort *)(zbuf.buf);
+	}
+end_exit_2:
+	return ret;
+}
+
+/*
  * mw_after_conversion() - 変換後呼ぶ。指定文節からの各文節の最優先候補を得る。
  *
  * 引数                  - bun		指定文節
@@ -626,7 +794,8 @@ static ushort *mw_after_conversion(context_t *cx, HIMC hIMC, int *nbun, int bun,
 	ushort *ret;
 
 	/* 前回までの後始末 */
-	mw_clear_context(cx->context_num);
+/*	mw_clear_context(cx->context_num);	*/
+	mw_sub_clear_context(cx);
 
 	/*  文節位置の情報 */
 	BufLen = ImmGetCompositionStringW(hIMC, GCS_COMPCLAUSE, NULL, 0);
@@ -767,11 +936,20 @@ end_exit_2:
 static int mw_set_target_clause(context_t *cx, HIMC hIMC, int bun_no)
 {
 	int fRet = 0, CurClause = -1;
-	UINT uClause, uMaxClause, uCnt, uCntRead;
+	UINT uClause, uMaxClause, uCnt, uCntRead, k;
 	DWORD i, j;
 	BOOL fAttrOK = FALSE, fAttrReadOK = FALSE;
 	BYTE bAt;
+	int nbun, len;
 
+#if 0	/* どうもだめだ	04.10.08 Y.A. */
+/* >> 現在の文節情報を取り直してみたりする	04.10.07 Y.A. */
+	if (mw_get_curclause(cx, hIMC) == FALSE)
+	{
+		return -1;		/* 現在変換中の文字列は無い */
+	}
+/* << 現在の文節情報を取り直してみたりする	04.10.07 Y.A. */
+#endif	/* どうもだめだ	04.10.08 Y.A. */
 /* >> 現在の変換対象の文節が指定された文節と一致するか？ */
 	uMaxClause = (UINT)(cx->dwCompClsLen / sizeof(DWORD)) - 1;
 	if (uMaxClause <= 0)
@@ -779,11 +957,15 @@ static int mw_set_target_clause(context_t *cx, HIMC hIMC, int bun_no)
 		return -1;		/* 現在変換中の文字列は無い */
 	}
 
-	for (CurClause = 0; CurClause < (int)uMaxClause; CurClause++)
+	/* カウンタにCurClause使っちゃ次の判断がだめじゃんよ〜	04.10.06 Y.A. */
+	for (k = 0; k < uMaxClause; k++)
 	{
-		if ((cx->bCompAttr[cx->dwCompCls[CurClause]] == ATTR_TARGET_CONVERTED) ||
-			(cx->bCompAttr[cx->dwCompCls[CurClause]] == ATTR_TARGET_NOTCONVERTED))
+		if ((cx->bCompAttr[cx->dwCompCls[k]] == ATTR_TARGET_CONVERTED) ||
+			(cx->bCompAttr[cx->dwCompCls[k]] == ATTR_TARGET_NOTCONVERTED))
+		{
+			CurClause = k;
 			break;
+		}
 	}
 
 	if (CurClause == -1)
@@ -794,6 +976,12 @@ static int mw_set_target_clause(context_t *cx, HIMC hIMC, int bun_no)
 /* >> 現在の変換対象の文節を指定された文節に移動 */
 	if (CurClause != bun_no)
 	{
+/* >> 04.10.04 Y.A. */
+		if (cx->cur_bun_no != -1)
+		{
+			cx->cur_bun_no = -1;
+		}
+/* >> 04.10.04 Y.A. */
 		uMaxClause = (cx->dwCompClsLen / sizeof(DWORD)) - 1;
 		uClause = bun_no;
 		uCnt = 0;
@@ -982,6 +1170,66 @@ static int mw_convert_hankana2zenhira(ushort *wcs, int len)
 }
 
 /*
+ * mw_convert_zenhira2hankana() -
+ *
+ * cannawc の全角ひらがなから半角カタカナへ変換する
+ *
+ *	04.10.01 Y.A.
+ *
+ */
+static int mw_convert_zenhira2hankana(ushort *wcs, int len)
+{
+	int i, j;
+	uchar mod, c;
+	ushort c1, c2;
+	for (i = 0; i < len; i++)
+	{
+		mod = 0;
+		if ((wcs[i] & 0x8000) == 0x8000)
+		{
+			if ((wcs[i] & 0xFF00) == 0xDE00)
+			{	/* ゛ */
+				wcs[i] = 0xABA1;
+			} else if ((wcs[i] & 0xFF00) == 0xDF00)
+			{	/* ゜ */
+				wcs[i] = 0xACA1;
+			} else
+			{
+				if (i + 1 < len)
+				{
+					if ((wcs[i + 1] & 0xFF00) == 0xDE00)
+						mod = MOD_TEN;
+					if ((wcs[i + 1] & 0xFF00) == 0xDF00)
+						mod = MOD_MARU;
+				}
+
+				if ((j = mw_lookup_hira_table((wcs[i] & 0xFF00), mod)) != -1)
+				{
+					mod &= hira_table[j].modifiers; 
+					c = hira_table[j].zenkaku2_start;
+					c1 = (wcs[i] & 0xFF00) >> 8;
+					c2 = (hira_table[j].han_start & 0xFF00) >> 8;
+					c += (c1 - c2) * hira_table[j].offset;
+					c += mod;
+
+					wcs[i] = 0x00a4 + (((ushort)c) << 8);
+
+					if (mod)
+					{
+						memmove(&(wcs[i + 1]), &(wcs[i + 2]), (len - (i + 1) + 1) * 2);
+						len --;
+					}
+				}
+			}
+		}
+	}
+
+	wcs[len] = '\0';
+
+	return len;
+}
+
+/*
  * mw_get_yomi() - 指定された文節の読みを取得する。
  *                 Windowsの読みは半角カナで入っているようなので、それを全角に直してやる。
  *
@@ -999,7 +1247,7 @@ static ushort *mw_get_yomi(context_t *cx, int bun_no, int *len_r)
 	ushort *workp;
 	DWORD i;
 
-	DWORD uMaxClause = (cx->dwCompReadClsLen / sizeof(DWORD)) - 1;
+	int uMaxClause = (cx->dwCompReadClsLen / sizeof(DWORD)) - 1;
 
 	if (bun_no < uMaxClause)
 	{
@@ -1602,6 +1850,7 @@ int imm32wrapper_begin_convert(int id, buffer_t *cbuf)
 	BOOL fRet;
 	HIMC hIMC = 0;
 	LPWSTR iyomi;
+	LPWSTR hyomi;
 
 	cx_num = LSBMSB16(sp[4]);
 	cmode = LSBMSB32(ip[1]);
@@ -1644,7 +1893,11 @@ int imm32wrapper_begin_convert(int id, buffer_t *cbuf)
 		{
 			goto error_exit;
 		}
-		fRet = ImmSetCompositionStringW(hIMC, SCS_SETSTR, NULL, 0, (LPCVOID)(iyomi), wcslen(iyomi) * 2);	/* 読み設定 */
+/* >> 04.10.01 Y.A. */
+		hyomi = (LPWSTR)calloc(2, (len * 2) + 1);	/* 濁点等を考慮すると最大２倍になる */
+		LCMapStringW(MAKELCID(MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT), SORT_DEFAULT), LCMAP_HALFWIDTH | LCMAP_KATAKANA, iyomi, wcslen(iyomi), hyomi, (len * 2) + 1);
+		fRet = ImmSetCompositionStringW(hIMC, SCS_SETSTR, NULL, 0, (LPCVOID)(hyomi), wcslen(hyomi) * 2);	/* 読み設定 */
+/* << 04.10.01 Y.A. */
 		if (fRet == FALSE)
 		{
 			goto error_exit;
@@ -1670,7 +1923,9 @@ int imm32wrapper_begin_convert(int id, buffer_t *cbuf)
 		sp[3 + len] = 0;
 
 		if (hIMC != 0)
+		{
 			ImmReleaseContext(hWnd_IMM, hIMC);
+		}
 
 		return 1;
 	}
@@ -1680,7 +1935,9 @@ error_exit:
 	header->err.e16 = LSBMSB16(-1);
 
 	if (hIMC != 0)
+	{
 		ImmReleaseContext(hWnd_IMM, hIMC);
+	}
 
 	return 1;
 }
@@ -1724,7 +1981,9 @@ int imm32wrapper_end_convert(int id, buffer_t *cbuf)
 						if (mw_set_target_clause(cx, hIMC, i) >= 0)
 						{
 							if (LSBMSB16(pList[i]) != 0)
+							{
 								ImmNotifyIME(hIMC, NI_SELECTCANDIDATESTR, 0, LSBMSB16(pList[i]));
+							}
 						}
 					}
 					ImmNotifyIME(hIMC, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
@@ -1743,7 +2002,9 @@ int imm32wrapper_end_convert(int id, buffer_t *cbuf)
 	header->err.e8 = 0;
 
 	if (hIMC != 0)
+	{
 		ImmReleaseContext(hWnd_IMM, hIMC);
+	}
 
 	return 1;
 }
@@ -1761,7 +2022,7 @@ int imm32wrapper_get_candidacy_list(int id, buffer_t *cbuf)
 	context_t *cx;
 	cannaheader_t *header = (cannaheader_t *)cbuf->buf;
 	ushort *sp = (short *)cbuf->buf;
-	int bun_no, koho_num = 0, len, pnt, errflag = 0, i;
+	int bun_no, koho_num = 0, len, pnt, errflag = 0, i, nbun;
 	short cx_num, datalen;
 	ushort *ckoho;
 	HIMC hIMC = 0;
@@ -1783,43 +2044,113 @@ int imm32wrapper_get_candidacy_list(int id, buffer_t *cbuf)
 		hIMC = ImmGetContext(hWnd_IMM);
 		if (hIMC != 0)
 		{
-			/* 候補の取得 */
-			CurClause = mw_set_target_clause(cx, hIMC, bun_no);
-			if (CurClause < 0)
-			{	/* 文節の移動に失敗した */
-				errflag = 1;
-			} else
-			{	/* 変換候補リストを取得 */
-				ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);			/* 変換候補リスト表示 */
-				BufLen = ImmGetCandidateListW(hIMC, 0, NULL, 0);
-				lpCandList = (LPCANDIDATELIST)calloc(1, BufLen);
-				dwRet = ImmGetCandidateListW(hIMC, 0, lpCandList, BufLen);
-				if (dwRet != 0)
-				{
-					DWORD i;
-					LPDWORD lpdwOffset;
-					lpdwOffset = &lpCandList->dwOffset[0];
-
-					for (i = 0; i < lpCandList->dwCount; i++)
+			if (convmode == 1)
+			{
+				/* 候補の取得 */
+				CurClause = mw_set_target_clause(cx, hIMC, bun_no);
+				if (CurClause < 0)
+				{	/* 文節の移動に失敗した */
+					errflag = 1;
+				} else
+				{	/* 変換候補リストを取得 */
+/* >> 変更	04.10.04 Y.A. */
+	/*				if (cx->cur_bun_no == -1) */
 					{
-						LPWSTR lpstr = (LPWSTR)((LPSTR)lpCandList + *lpdwOffset++);
+						ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);			/* 変換候補リスト表示 */
+						cx->cur_bun_no = bun_no;
+					}
+/* << 変更	04.10.04 Y.A. */
+					BufLen = ImmGetCandidateListW(hIMC, 0, NULL, 0);
+					lpCandList = (LPCANDIDATELIST)calloc(1, BufLen);
+					dwRet = ImmGetCandidateListW(hIMC, 0, lpCandList, BufLen);
+					if (dwRet != 0)
+					{
+						DWORD i;
+						LPDWORD lpdwOffset;
+						lpdwOffset = &lpCandList->dwOffset[0];
 
-						ckoho = mw_ucs2wcs(lpstr, wcslen(lpstr));
-						len = (cannawcstrlen(ckoho) * 2) + 2;
+						/* 順番に選択し、そのときの変換文字列をとってくる（ATOK 対策） */
+						for (i = 0; i < lpCandList->dwCount; i++)
+						{
+							ImmNotifyIME(hIMC, NI_SELECTCANDIDATESTR, 0, i);
+							ckoho = mw_after_selectcand(cx, hIMC, bun_no, &len);
+							len = (len + 1) * 2;
+							datalen += len;
+							buffer_check(cbuf, datalen);
 
+							memcpy(&(cbuf->buf[pnt]), ckoho, len);
+							pnt += len;
+							koho_num ++;
+						}
+						ImmNotifyIME(hIMC, NI_SELECTCANDIDATESTR, 0, 0);	/* 最初に戻す	04.10.06 Y.A. */
+					} else
+					{
+						errflag = 1;
+					}
+					/* >> 最後に読みを追加しないといけない	04.10.04 Y.A. */
+					if ((ckoho = mw_get_yomi(cx, bun_no, &len)) != NULL)
+					{
+						len = (len + 1) * 2;
 						datalen += len;
 						buffer_check(cbuf, datalen);
 
 						memcpy(&(cbuf->buf[pnt]), ckoho, len);
 						pnt += len;
 						koho_num ++;
+					} else
+					{
+						errflag = 1;
 					}
-				} else
-				{
-					errflag = 1;
-				}
+					/* << 最後に読みを追加しないといけない	04.10.04 Y.A. */
 
-				MYFREE(lpCandList);
+					MYFREE(lpCandList);
+				}
+			} else
+			{
+				/* 候補の取得 */
+				CurClause = mw_set_target_clause(cx, hIMC, bun_no);
+				if (CurClause < 0)
+				{	/* 文節の移動に失敗した */
+					errflag = 1;
+				} else
+				{	/* 変換候補リストを取得 */
+/* >> 変更	04.10.04 Y.A. */
+					if (cx->cur_bun_no == -1)
+					{
+						ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);			/* 変換候補リスト表示 */
+						cx->cur_bun_no = bun_no;
+					}
+/* << 変更	04.10.04 Y.A. */
+					BufLen = ImmGetCandidateListW(hIMC, 0, NULL, 0);
+					lpCandList = (LPCANDIDATELIST)calloc(1, BufLen);
+					dwRet = ImmGetCandidateListW(hIMC, 0, lpCandList, BufLen);
+					if (dwRet != 0)
+					{
+						DWORD i;
+						LPDWORD lpdwOffset;
+						lpdwOffset = &lpCandList->dwOffset[0];
+
+						for (i = 0; i < lpCandList->dwCount; i++)
+						{
+							LPWSTR lpstr = (LPWSTR)((LPSTR)lpCandList + *lpdwOffset++);
+
+							ckoho = mw_ucs2wcs(lpstr, wcslen(lpstr));
+							len = (cannawcstrlen(ckoho) * 2) + 2;
+
+							datalen += len;
+							buffer_check(cbuf, datalen);
+
+							memcpy(&(cbuf->buf[pnt]), ckoho, len);
+							pnt += len;
+							koho_num ++;
+						}
+					} else
+					{
+						errflag = 1;
+					}
+
+					MYFREE(lpCandList);
+				}
 			}
 		} else
 		{
@@ -1842,7 +2173,9 @@ int imm32wrapper_get_candidacy_list(int id, buffer_t *cbuf)
 			header->datalen = LSBMSB16(datalen);
 
 			if (hIMC != 0)
+			{
 				ImmReleaseContext(hWnd_IMM, hIMC);
+			}
 
 			return 1;
 		}
@@ -1852,7 +2185,9 @@ int imm32wrapper_get_candidacy_list(int id, buffer_t *cbuf)
 	header->err.e16 = LSBMSB16(-1);
 
 	if (hIMC != 0)
+	{
 		ImmReleaseContext(hWnd_IMM, hIMC);
+	}
 
 	return 1;
 }
@@ -1987,6 +2322,15 @@ int imm32wrapper_resize_pause(int id, buffer_t *cbuf)
 		HIMC hIMC = ImmGetContext(hWnd_IMM);
 		if (hIMC != 0)
 		{
+/* >> ATOK対策	04.09.30 Y.A. */
+			int CurClause = mw_set_target_clause(cx, hIMC, bun_no);
+			if (CurClause < 0)
+			{	/* 文節の移動に失敗した */
+				ImmReleaseContext(hWnd_IMM, hIMC);
+				goto error_exit;
+			}
+/* << ATOK対策	04.09.30 Y.A. */
+
 			/* 対象文節の長さ決定 */
 			if (mw_get_yomi(cx, bun_no, &curyomilen) == NULL)
 			{
@@ -2059,8 +2403,10 @@ int imm32wrapper_resize_pause(int id, buffer_t *cbuf)
 					dwClsRead[i] = cx->dwCompReadCls[i];
 			}
 
+#if 1	/*debug*/
 			if (ImmSetCompositionStringW(hIMC,SCS_CHANGECLAUSE,NULL,0,dwClsRead,(uMaxClause+1)*sizeof(DWORD)) == TRUE &&
 				ImmNotifyIME(hIMC, NI_COMPOSITIONSTR, CPS_CONVERT, 0) == TRUE)
+#endif	/*debug*/
 			{
 				ckoho = mw_after_conversion(cx, hIMC, &nbun, bun_no, &len);	/* nbunはアドレスに	03.10.20 Y.A. */
 				datalen = 2 + len * 2 + 2;
@@ -2125,7 +2471,7 @@ int imm32wrapper_get_status(int id, buffer_t *cbuf)
 
 	short bun_no, koho_no, cx_num;
 	short *sp = (short *)cbuf->buf;
-	int len, koho_num, errflag = 0, ylen, klen;
+	int len, koho_num, errflag = 0, ylen, klen, nbun;
 	cannaheader_t *header = (cannaheader_t *)cbuf->buf;
 	context_t *cx;
 	HIMC hIMC = 0;
@@ -2155,21 +2501,62 @@ int imm32wrapper_get_status(int id, buffer_t *cbuf)
 					errflag = 1;
 				} else
 				{	/* 変換候補リストを取得 */
-					ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);			/* 変換候補リスト表示 */
-					BufLen = ImmGetCandidateListW(hIMC, 0, NULL, 0);
-					lpCandList = (LPCANDIDATELIST)calloc(1, BufLen);
-					dwRet = ImmGetCandidateListW(hIMC, 0, lpCandList, BufLen);
-					if (dwRet != 0 && lpCandList->dwCount > koho_no)
-					{	/* 変換候補があれば対象候補番号の候補を確保しておく */
-						LPWSTR lpstr;
-						koho_num = (int)(lpCandList->dwCount);
-						lpstr = (LPWSTR)((LPSTR)lpCandList + lpCandList->dwOffset[koho_no]);
-						ckoho = mw_ucs2wcs(lpstr, wcslen(lpstr));
-						klen = cannawcstrlen(ckoho) * 2;
-					} else
-						errflag = 1;
+					if (convmode == 1)
+					{
+/* >> 変更	04.10.04 Y.A. */
+						if (cx->cur_bun_no == -1)
+						{
+							ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);			/* 変換候補リスト表示 */
+							cx->cur_bun_no = bun_no;
+						}
+/* << 変更	04.10.04 Y.A. */
+						BufLen = ImmGetCandidateListW(hIMC, 0, NULL, 0);
+						lpCandList = (LPCANDIDATELIST)calloc(1, BufLen);
+						dwRet = ImmGetCandidateListW(hIMC, 0, lpCandList, BufLen);
 
-					MYFREE(lpCandList);
+						if (dwRet != 0 && lpCandList->dwCount > koho_no)
+						{	/* 変換候補があれば対象候補番号の候補を確保しておく */
+							LPWSTR lpstr;
+							int i;
+
+							koho_num = (int)(lpCandList->dwCount);
+
+							/* 順番に選択し、そのときの変換文字列をとってくる（ATOK 対策） */
+							for (i = 0; i < koho_no; i++)
+							{
+								ImmNotifyIME(hIMC, NI_SELECTCANDIDATESTR, 0, i);
+							}
+
+							ckoho = mw_after_selectcand(cx, hIMC, bun_no, &len);
+							klen = cannawcstrlen(ckoho) * 2;
+							ImmNotifyIME(hIMC, NI_SELECTCANDIDATESTR, 0, 0);	/* 最初に戻す	04.10.06 Y.A. */
+						} else
+						{
+							errflag = 1;
+						}
+
+						MYFREE(lpCandList);
+					} else
+					{
+						ImmNotifyIME(hIMC, NI_OPENCANDIDATE, 0, 0);			/* 変換候補リスト表示 */
+						BufLen = ImmGetCandidateListW(hIMC, 0, NULL, 0);
+						lpCandList = (LPCANDIDATELIST)calloc(1, BufLen);
+						dwRet = ImmGetCandidateListW(hIMC, 0, lpCandList, BufLen);
+
+						if (dwRet != 0 && lpCandList->dwCount >= koho_no)	/* lpCandList->dwCount > koho_no → >= に変更	04.10.05 Y.A.*/
+						{	/* 変換候補があれば対象候補番号の候補を確保しておく */
+							LPWSTR lpstr;
+							koho_num = (int)(lpCandList->dwCount);
+							lpstr = (LPWSTR)((LPSTR)lpCandList + lpCandList->dwOffset[koho_no]);
+							ckoho = mw_ucs2wcs(lpstr, wcslen(lpstr));
+							klen = cannawcstrlen(ckoho) * 2;
+						} else
+						{
+							errflag = 1;
+						}
+
+						MYFREE(lpCandList);
+					}
 				}
 			} else
 				errflag = 1;
@@ -2194,7 +2581,9 @@ int imm32wrapper_get_status(int id, buffer_t *cbuf)
 				memcpy(&(cbuf->buf[5]), (char *)&stat, 28);
 
 				if (hIMC != 0)
+				{
 					ImmReleaseContext(hWnd_IMM, hIMC);
+				}
 
 				return 1;
 			}
@@ -2202,7 +2591,9 @@ int imm32wrapper_get_status(int id, buffer_t *cbuf)
 	}
 
 	if (hIMC != 0)
+	{
 		ImmReleaseContext(hWnd_IMM, hIMC);
+	}
 	header->datalen = LSBMSB16(1);
 	header->err.e8 = -1;
 

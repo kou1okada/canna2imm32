@@ -19,7 +19,7 @@
 #ifndef __const_def__
 #define __const_def__
 
-#define ESECANNA_VERSION "Canna2IMM32 1.0.0"
+#define ESECANNA_VERSION "Canna2IMM32 1.0.1"
 #define CANNA_UNIX_DOMAIN_DIR "/tmp/.iroha_unix"
 #define CANNA_UNIX_DOMAIN_PATH "/tmp/.iroha_unix/IROHA"
 #define CANNA_SERVICE_NAME "canna"
