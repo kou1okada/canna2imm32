@@ -19,11 +19,12 @@
 #ifndef __winimm32_h__
 #define __winimm32_h__
 
-#define ESECANNA_MODULE_VERSION "Imm32 1.0.0"
+#define ESECANNA_MODULE_VERSION "Imm32 1.0.1"
 
 #include <windows.h>
 #include <windowsx.h>
 #include <imm.h>
+#include <winnls.h>		// add 04.10.01 Y.A.
 /* #include <mbstring.h> */
 
 /* proto */

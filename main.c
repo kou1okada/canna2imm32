@@ -36,6 +36,7 @@ char debugmode = 0;
 char daemonizemode = 1;	/* 0: 普通のアプリとして動作	1: デーモンとして動作 */
 char inetmode = 0;		/* 0: inetドメインソケットを使わない	1: inetドメインソケットを使う */
 char logmode = 1;		/* 0: コンソールにログを出力する	1: ESECANNA_LOG_PATH にログを出力する */
+char convmode = 0;		/* 0: 変換ウインドウから候補を取得	1: 自分で変換してひとつずつ取得		2004.12.06 Y.A. */
 client_t client[MAX_CLIENT_NUM];
 
 #ifdef USEDLL
@@ -235,6 +236,7 @@ static void show_help(void)
 	fprintf(stderr, "    -inet       use inet domain\n");
 	fprintf(stderr, "    -f          run foreground\n");
 	fprintf(stderr, "    -nolog      no log output\n");
+	fprintf(stderr, "    -a          don't use candidate list(for ATOK)\n");
 	fprintf(stderr, "    -d          debug mode\n");
 }
 
@@ -253,6 +255,10 @@ int main(int argc, char **argv)
 			inetmode = 1;
 		else if (strcmp(argv[i], "-nolog") == 0)
 			logmode = 0;
+/* 変換モード追加	>> 2004.12.06 Y.A. */
+		else if (strcmp(argv[i], "-a") == 0)
+			convmode = 1;
+/* 変換モード追加	<< 2004.12.06 Y.A. */
 		else if (strcmp(argv[i], "--help") == 0)
 		{
 			show_help();
